@@ -28,5 +28,8 @@
     "serverless-offline": {
       "serverless": "$serverless"
     }
+  },
+  "dependencies": {
+    "mongodb": "^7.0.0"
   }
 }

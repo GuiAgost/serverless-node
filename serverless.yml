@@ -1,16 +1,19 @@
-# "org" ensures this Service is used with the correct Serverless Framework Access Key.
 org: gui123
-# "app" enables Serverless Framework Dashboard features and sharing them with other Services.
 app: alura-serverless
-# "service" is the name of this project. This will also be added to your AWS resource names.
-service: aws-node-http-api-project
+service: api
+
+params:
+  default:
+    dbName: alura-serverless
+  dev:
+    connectionString: mongodb://localhost:27017/${self:params.default.dbName}
 
 provider:
   name: aws
   runtime: nodejs20.x
-  # Uncomment to easily set up a custom domain. Read the docs for more details:
-  # https://www.serverless.com/framework/docs/providers/aws/guide/domains
-  # domain: api.example.com
+  environment:
+    MONGODB_CONNECTIONSTRING: ${param:connectionString}
+    MONGODB_DB_NAME: ${param:dbName}
 
 functions:
   sendResponse:
