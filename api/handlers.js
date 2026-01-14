@@ -1,37 +1,79 @@
-'use strict';
-const { MongoClient, ObjectId} = require('mongodb')
-
-// async function connectToDatabase() {
-//     const client = new MongoClient(process.env.MONGODB_CONNECTIONSTRING)
-//     const connection = await client.connect()
-//     return connection.db(process.env.MONGODB_DB_NAME)
-// }
-
-let cachedDb = null; 
+"use strict";
+const { MongoClient, ObjectId } = require("mongodb");
+const { pbkdf2Sync } = require("crypto");
 
 async function connectToDatabase() {
-  
-  if (cachedDb) { 
-    return cachedDb; 
-  } 
+    const client = new MongoClient(process.env.MONGODB_CONNECTIONSTRING)
+    const connection = await client.connect()
+    return connection.db(process.env.MONGODB_DB_NAME)
+}
 
-  const client = new MongoClient(process.env.MONGODB_CONNECTIONSTRING); 
-  await client.connect(); 
-  cachedDb = client.db(process.env.MONGODB_DB_NAME); 
-  return cachedDb; 
+async function basicAuth(event) {
+  const { authorization } = event.headers;
+  if (!authorization) {
+    return {
+      statusCode: 401,
+      body: JSON.stringfy({ error: "Missing authorization header" }),
+    };
+  }
+
+  const [type, credentials] = authorization.split(" ");
+  if (type != "Basic") {
+    return {
+      statusCode: 401,
+      body: JSON.stringfy({ error: "Unsuported authorization type" }),
+    };
+  }
+
+  const [username, password] = Buffer.from(credentials, "base64")
+    .toString()
+    .split(":");
+
+  const hashedPass = pbkdf2Sync(
+    password,
+    process.env.SALT,
+    10000,
+    64,
+    "sha512"
+  ).toString("hex");
+
+  const client = await connectToDatabase();
+  const collection = await client.collection("users");
+  const user = await collection.findOne({
+    name: username,
+    password: hashedPass,
+  });
+
+  if (!user) {
+    return {
+      statusCode: 401,
+      body: JSON.stringfy({ error: "Invalid Credentials" }),
+    };
+  }
+
+  return {
+    id: user._id,
+    username: user.username,
+  };
 }
 
 function extractBody(event) {
   if (!event?.body) {
     return {
       statusCode: 422,
-      body: JSON.stringify({ error: 'Missing body' }),
+      body: JSON.stringify({ error: "Missing body" }),
     };
   }
   return JSON.parse(event.body);
 }
 
 module.exports.sendResponse = async (event) => {
+  const authResult = await authorize(event);
+
+  if (authResult.statusCode === 401) {
+    return authResult;
+  }
+
   const correctQuestions = [3, 1, 0, 2];
   const { name, answers } = extractBody(event);
 
@@ -50,7 +92,7 @@ module.exports.sendResponse = async (event) => {
   };
 
   const client = await connectToDatabase();
-  const collection = await client.collection('results');
+  const collection = await client.collection("results");
   const { insertedId } = await collection.insertOne(result);
 
   return {
@@ -63,32 +105,38 @@ module.exports.sendResponse = async (event) => {
       },
     }),
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
     },
   };
 };
 
 module.exports.getResult = async (event) => {
+  const authResult = await authorize(event);
+
+  if (authResult.statusCode === 401) {
+    return authResult;
+  }
+
   const client = await connectToDatabase();
-  const collection = await client.collection('results');
+  const collection = await client.collection("results");
 
   const result = await collection.findOne({
-    _id: new ObjectId(event.pathParameters.id)
+    _id: new ObjectId(event.pathParameters.id),
   });
 
   if (!result) {
     return {
       statusCode: 404,
-      body: JSON.stringify({ error: 'Result not found' }),
+      body: JSON.stringify({ error: "Result not found" }),
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
       },
     };
   }
   return {
     statusCode: 200,
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
     },
     body: JSON.stringify(result),
   };
