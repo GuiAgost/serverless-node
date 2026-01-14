@@ -1,15 +1,21 @@
 "use strict";
 const { MongoClient, ObjectId } = require("mongodb");
 const { pbkdf2Sync } = require("crypto");
+const { sign, verify } = require('jsonwebtoken')
 
+let connectionInstance = null
 async function connectToDatabase() {
-    const client = new MongoClient(process.env.MONGODB_CONNECTIONSTRING)
-    const connection = await client.connect()
-    return connection.db(process.env.MONGODB_DB_NAME)
+  if (connectionInstance) return connectionInstance
+
+  const client = new MongoClient(process.env.MONGODB_CONNECTIONSTRING)
+  const connection = await client.connect()
+  connectionInstance = connection.db(process.env.MONGODB_DB_NAME)
+
+  return connectionInstance
 }
 
-async function basicAuth(event) {
-  const { authorization } = event.headers;
+async function authorize (event) {
+const { authorization } = event.headers;
   if (!authorization) {
     return {
       statusCode: 401,
@@ -17,44 +23,23 @@ async function basicAuth(event) {
     };
   }
 
-  const [type, credentials] = authorization.split(" ");
-  if (type != "Basic") {
+  const [type, token] = authorization.split(" ");
+  if (type != "Bearer" || !token) {
     return {
       statusCode: 401,
-      body: JSON.stringfy({ error: "Unsuported authorization type" }),
+      body: JSON.stringify({ error: "Unsuported authorization type" }),
     };
   }
 
-  const [username, password] = Buffer.from(credentials, "base64")
-    .toString()
-    .split(":");
-
-  const hashedPass = pbkdf2Sync(
-    password,
-    process.env.SALT,
-    10000,
-    64,
-    "sha512"
-  ).toString("hex");
-
-  const client = await connectToDatabase();
-  const collection = await client.collection("users");
-  const user = await collection.findOne({
-    name: username,
-    password: hashedPass,
-  });
-
-  if (!user) {
+  const decodedToken = verify(token, process.env.JWT_SECRET, { audience: 'alura-serverless' });
+  if (!decodedToken) {
     return {
       statusCode: 401,
-      body: JSON.stringfy({ error: "Invalid Credentials" }),
-    };
+      body: JSON.stringify({ error: 'Invalid token' })
+    }
   }
 
-  return {
-    id: user._id,
-    username: user.username,
-  };
+  return decodedToken  
 }
 
 function extractBody(event) {
@@ -65,6 +50,38 @@ function extractBody(event) {
     };
   }
   return JSON.parse(event.body);
+}
+
+module.exports.login = async (event) => {
+  const {username, password} = extractBody(event)
+  const hashedPass = pbkdf2Sync(password, process.env.SALT, 100000, 64, 'sha512').toString('hex')
+
+  const client = await connectToDatabase()
+  const collection = await client.collection('users')
+  const user = await collection.findOne({
+      name: username,
+      password: hashedPass
+  })
+
+  if(!user) {
+      return {
+          statusCode: 401,
+          body: JSON.stringfy({ error: 'Invalid Credentials' })
+      }
+  }
+
+   const token = sign({ username, id: user._id }, process.env.JWT_SECRET, {
+    expiresIn: '24h',
+    audience: 'alura-serverless'
+  })
+
+  return {
+    statusCode: 200,
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ token })
+  }
 }
 
 module.exports.sendResponse = async (event) => {
