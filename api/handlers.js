@@ -1,42 +1,23 @@
 "use strict";
-const { MongoClient, ObjectId } = require("mongodb");
 const { pbkdf2Sync } = require("crypto");
 const { sign, verify } = require('jsonwebtoken')
-
-let connectionInstance = null
-async function connectToDatabase() {
-  if (connectionInstance) return connectionInstance
-
-  const client = new MongoClient(process.env.MONGODB_CONNECTIONSTRING)
-  const connection = await client.connect()
-  connectionInstance = connection.db(process.env.MONGODB_DB_NAME)
-
-  return connectionInstance
-}
+const { buildResponse } = require('./util')
+const { getUserByCredentials, saveResultsToDatabase, getResultById } = require('./database')
 
 async function authorize (event) {
 const { authorization } = event.headers;
   if (!authorization) {
-    return {
-      statusCode: 401,
-      body: JSON.stringfy({ error: "Missing authorization header" }),
-    };
+    return buildResponse(401, { error: "Missing authorization header" })
   }
 
   const [type, token] = authorization.split(" ");
   if (type != "Bearer" || !token) {
-    return {
-      statusCode: 401,
-      body: JSON.stringify({ error: "Unsuported authorization type" }),
-    };
+    return buildResponse(401, { error: "Unsuported authorization type" })
   }
 
   const decodedToken = verify(token, process.env.JWT_SECRET, { audience: 'alura-serverless' });
   if (!decodedToken) {
-    return {
-      statusCode: 401,
-      body: JSON.stringify({ error: 'Invalid token' })
-    }
+    return buildResponse(401, { error: "Invalid token" })
   }
 
   return decodedToken  
@@ -44,10 +25,7 @@ const { authorization } = event.headers;
 
 function extractBody(event) {
   if (!event?.body) {
-    return {
-      statusCode: 422,
-      body: JSON.stringify({ error: "Missing body" }),
-    };
+    return buildResponse(422, { error: "Missing body" })
   }
   return JSON.parse(event.body);
 }
@@ -56,18 +34,10 @@ module.exports.login = async (event) => {
   const {username, password} = extractBody(event)
   const hashedPass = pbkdf2Sync(password, process.env.SALT, 100000, 64, 'sha512').toString('hex')
 
-  const client = await connectToDatabase()
-  const collection = await client.collection('users')
-  const user = await collection.findOne({
-      name: username,
-      password: hashedPass
-  })
+  const user = await getUserByCredentials(username, hashedPass)
 
   if(!user) {
-      return {
-          statusCode: 401,
-          body: JSON.stringfy({ error: 'Invalid Credentials' })
-      }
+    return buildResponse(401, { error: "Invalid Credentials" })
   }
 
    const token = sign({ username, id: user._id }, process.env.JWT_SECRET, {
@@ -75,13 +45,7 @@ module.exports.login = async (event) => {
     audience: 'alura-serverless'
   })
 
-  return {
-    statusCode: 200,
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ token })
-  }
+  return buildResponse (200, {token})
 }
 
 module.exports.sendResponse = async (event) => {
@@ -108,23 +72,15 @@ module.exports.sendResponse = async (event) => {
     totalAnswers: answers.length,
   };
 
-  const client = await connectToDatabase();
-  const collection = await client.collection("results");
-  const { insertedId } = await collection.insertOne(result);
+  const insertedId = await saveResultsToDatabase(result)
 
-  return {
-    statusCode: 201,
-    body: JSON.stringify({
+  return buildResponse (201, {
       resultId: insertedId,
       __hypermedia: {
-        href: `/results.html`,
-        query: { id: insertedId },
-      },
-    }),
-    headers: {
-      "Content-Type": "application/json",
-    },
-  };
+      href: `/results.html`,
+      query: { id: insertedId },
+    }
+  })
 };
 
 module.exports.getResult = async (event) => {
@@ -134,27 +90,11 @@ module.exports.getResult = async (event) => {
     return authResult;
   }
 
-  const client = await connectToDatabase();
-  const collection = await client.collection("results");
-
-  const result = await collection.findOne({
-    _id: new ObjectId(event.pathParameters.id),
-  });
+  const result = await getResultById(event.pathParameters.id)
 
   if (!result) {
-    return {
-      statusCode: 404,
-      body: JSON.stringify({ error: "Result not found" }),
-      headers: {
-        "Content-Type": "application/json",
-      },
-    };
+    return buildResponse(404, { error: 'Result not found'})
   }
-  return {
-    statusCode: 200,
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(result),
-  };
+
+  return buildResponse (200, result)
 };
