@@ -1,5 +1,9 @@
 const $ = document.querySelector.bind(document)
 
+if (!window.localStorage.getItem('token')) {
+  window.location.href = '/login.html'
+}
+
 $('form').addEventListener('submit', async (e) => {
   e.preventDefault()
   const data = {
@@ -23,7 +27,7 @@ $('form').addEventListener('submit', async (e) => {
     data.answers[Number(answer.name) - 1] = Number(answer.value)
   })
 
-  const response = await fetch('/api/results', {
+  const response = await fetch('http://s7my8wppsa.execute-api.eu-west-1.amazonaws.com/api/results', {
     method: 'POST',
     body: JSON.stringify(data),
     headers: {

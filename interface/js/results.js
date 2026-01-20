@@ -1,3 +1,7 @@
+if (!window.localStorage.getItem('token')) {
+  window.location.href = '/login.html'
+}
+
 const queryString = new URLSearchParams(window.location.search)
 const resultId = queryString.get('id')
 
@@ -8,7 +12,11 @@ const bail = () => {
 
 if (!resultId) bail()
 
-fetch(`/api/results/${resultId}`)
+fetch(`/api/results/${resultId}`, {
+  headers: {
+    Authorization: `Bearer ${window.localStorage.getItem('token')}`
+  }
+})
   .then((r) => {
     if (!r.ok) bail()
     return r.json()
